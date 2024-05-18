@@ -11,7 +11,6 @@ using ForwardDiff, ReverseDiff
 
 # JSO
 using NLPModels
-using Requires
 
 abstract type AbstractADNLPModel{T, S} <: AbstractNLPModel{T, S} end
 abstract type AbstractADNLSModel{T, S} <: AbstractNLSModel{T, S} end
@@ -25,10 +24,26 @@ include("sparsity_pattern.jl")
 include("sparse_jacobian.jl")
 include("sparse_hessian.jl")
 
+# Attempt to load some symbols from the Symbolics extensions
+symbolics_ext = Base.get_extension(@__MODULE__, :ADNLPModelsSymbolicsExt)
+if !isnothing(symbolics_ext)
+  SparseSymbolicsADJacobian = symbolics_ext.SparseSymbolicsADJacobian
+  SparseSymbolicsADHessian = symbolics_ext.SparseSymbolicsADHessian
+  SDTSparseADJacobian = symbolics_ext.SDTSparseADJacobian
+
+  # These backends should only be included if the module is loaded
+  predefined_backend[:default][:jacobian_backend] = SparseADJacobian
+  predefined_backend[:default][:jacobian_residual_backend] = SparseADJacobian
+  predefined_backend[:optimized][:jacobian_backend] = SparseADJacobian
+  predefined_backend[:optimized][:jacobian_residual_backend] = SparseADJacobian
+
+  predefined_backend[:default][:hessian_backend] = SparseADHessian
+  predefined_backend[:optimized][:hessian_backend] = SparseReverseADHessian
+end
+
 include("forward.jl")
 include("reverse.jl")
-include("enzyme.jl")
-include("zygote.jl")
+
 include("predefined_backend.jl")
 include("nlp.jl")
 
