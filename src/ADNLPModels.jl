@@ -45,11 +45,23 @@ end
 include("sparse_jacobian.jl")
 include("sparse_hessian.jl")
 
+@init begin
+  @require Symbolics = "0c5d862f-8b57-4792-8d23-62f2024744c7" begin
+    include("sparse_sym.jl")
+
+    predefined_backend[:default][:jacobian_backend] = SparseADJacobian
+    predefined_backend[:default][:jacobian_residual_backend] = SparseADJacobian
+    predefined_backend[:optimized][:jacobian_backend] = SparseADJacobian
+    predefined_backend[:optimized][:jacobian_residual_backend] = SparseADJacobian
+
+    predefined_backend[:default][:hessian_backend] = SparseADHessian
+    predefined_backend[:optimized][:hessian_backend] = SparseReverseADHessian
+  end
+end
+
 include("forward.jl")
 include("reverse.jl")
-include("enzyme.jl")
 include("sparse_diff_tools.jl")
-include("zygote.jl")
 include("predefined_backend.jl")
 include("nlp.jl")
 
@@ -178,20 +190,6 @@ function ADNLSModel!(model::AbstractNLSModel; kwargs...)
       model.meta.ucon;
       kwargs...,
     )
-  end
-end
-
-@init begin
-  @require Symbolics = "0c5d862f-8b57-4792-8d23-62f2024744c7" begin
-    include("sparse_sym.jl")
-
-    predefined_backend[:default][:jacobian_backend] = SparseADJacobian
-    predefined_backend[:default][:jacobian_residual_backend] = SparseADJacobian
-    predefined_backend[:optimized][:jacobian_backend] = SparseADJacobian
-    predefined_backend[:optimized][:jacobian_residual_backend] = SparseADJacobian
-
-    predefined_backend[:default][:hessian_backend] = SparseADHessian
-    predefined_backend[:optimized][:hessian_backend] = SparseReverseADHessian
   end
 end
 
