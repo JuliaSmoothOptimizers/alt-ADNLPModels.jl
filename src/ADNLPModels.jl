@@ -27,10 +27,12 @@ include("sparse_hessian.jl")
 
 include("forward.jl")
 include("reverse.jl")
-include("enzyme.jl")
-include("zygote.jl")
 include("predefined_backend.jl")
 include("nlp.jl")
+
+# Extensions
+include("enzyme.jl")
+include("zygote.jl")
 
 function ADNLPModel!(model::AbstractNLPModel; kwargs...)
   return if model.meta.nlin > 0
