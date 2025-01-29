@@ -216,11 +216,12 @@ function SparseEnzymeADHessian(
   cx = similar(x0, ncon)
   grad = similar(x0)
   function ℓ(x, y, obj_weight, cx)
-    res = obj_weight * f(x)
-    if ncon != 0
-      c!(cx, x)
-      res += sum(cx[i] * y[i] for i = 1:ncon)
-    end
+    # res = obj_weight * f(x)
+    res = f(x)
+    # if ncon != 0
+    #   c!(cx, x)
+    #   res += sum(cx[i] * y[i] for i = 1:ncon)
+    # end
     return res
   end
 
@@ -241,8 +242,10 @@ function SparseEnzymeADHessian(
   )
 end
 
-@init begin
-  @require Enzyme = "7da242da-08ed-463a-9acd-ee780be4f1d9" begin
+# @init begin
+#   @require Enzyme = "7da242da-08ed-463a-9acd-ee780be4f1d9" begin
+  using Enzyme
+
     function ADNLPModels.gradient(::EnzymeReverseADGradient, f, x)
       g = similar(x)
       Enzyme.gradient!(Enzyme.Reverse, g, Enzyme.Const(f), x)
@@ -250,6 +253,7 @@ end
     end
 
     function ADNLPModels.gradient!(::EnzymeReverseADGradient, g, f, x)
+      Enzyme.make_zero!(g)
       Enzyme.autodiff(Enzyme.Reverse, Enzyme.Const(f), Enzyme.Active, Enzyme.Duplicated(x, g))
       return g
     end
@@ -263,7 +267,16 @@ end
       fill!(b.seed, zero(T))
       for i = 1:n
         b.seed[i] = one(T)
-        Enzyme.hvp!(b.Hv, Enzyme.Const(f), x, b.seed)
+        # Enzyme.hvp!(b.Hv, f, x, b.seed)
+        grad = make_zero(x)
+        Enzyme.autodiff(
+          Enzyme.Forward,
+          Enzyme.Const(Enzyme.gradient!),
+          Enzyme.Const(Enzyme.Reverse),
+          Enzyme.DuplicatedNoNeed(grad, b.Hv),
+          Enzyme.Const(f),
+          Enzyme.Duplicated(x, b.seed),
+        )
         view(hess, :, i) .= b.Hv
         b.seed[i] = zero(T)
       end
@@ -462,7 +475,7 @@ end
           Enzyme.make_zero!(dx)
           dcx = Enzyme.make_zero(cx)
           res = Enzyme.autodiff(
-            Enzyme.Reverse,
+            Enzyme.set_runtime_activity(Enzyme.Reverse),
             ℓ,
             Enzyme.Active,
             Enzyme.Duplicated(x, dx),
@@ -476,7 +489,7 @@ end
         function _hvp!(res, ℓ, x, v, y, obj_weight, cx)
           dcx = Enzyme.make_zero(cx)
           Enzyme.autodiff(
-            Enzyme.Forward,
+            Enzyme.set_runtime_activity(Enzyme.Forward),
             _gradient!,
             res,
             Enzyme.Const(ℓ),
@@ -570,5 +583,5 @@ end
       obj_weight = zero(eltype(x))
       sparse_hess_coord!(b, x, obj_weight, v, vals)
     end
-  end
-end
+  # end
+# end
