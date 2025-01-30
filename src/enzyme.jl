@@ -1,3 +1,55 @@
+function _gradient!(dx, f, x)
+  Enzyme.make_zero!(dx)
+  res = Enzyme.autodiff(
+    Enzyme.set_runtime_activity(Enzyme.Reverse),
+    f,
+    Enzyme.Active,
+    Enzyme.Duplicated(x, dx),
+  )
+  return nothing
+end
+
+function _hvp!(res, f, x, v)
+  Enzyme.autodiff(
+    Enzyme.set_runtime_activity(Enzyme.Forward),
+    _gradient!,
+    res,
+    Enzyme.Const(f),
+    Enzyme.Duplicated(x, v),
+  )
+  return nothing
+end
+
+function _gradient!(dx, ℓ, x, y, obj_weight, cx)
+  Enzyme.make_zero!(dx)
+  dcx = Enzyme.make_zero(cx)
+  res = Enzyme.autodiff(
+    Enzyme.set_runtime_activity(Enzyme.Reverse),
+    ℓ,
+    Enzyme.Active,
+    Enzyme.Duplicated(x, dx),
+    Enzyme.Const(y),
+    Enzyme.Const(obj_weight),
+    Enzyme.Duplicated(cx, dcx),
+  )
+  return nothing
+end
+
+function _hvp!(res, ℓ, x, v, y, obj_weight, cx)
+  dcx = Enzyme.make_zero(cx)
+  Enzyme.autodiff(
+    Enzyme.set_runtime_activity(Enzyme.Forward),
+    _gradient!,
+    res,
+    Enzyme.Const(ℓ),
+    Enzyme.Duplicated(x, v),
+    Enzyme.Const(y),
+    Enzyme.Const(obj_weight),
+    Enzyme.Duplicated(cx, dcx),
+  )
+  return nothing
+end
+
 struct EnzymeReverseADGradient <: InPlaceADbackend end
 
 function EnzymeReverseADGradient(
@@ -23,9 +75,10 @@ function EnzymeReverseADJacobian(
   return EnzymeReverseADJacobian()
 end
 
-struct EnzymeReverseADHessian{T} <: ADBackend
+struct EnzymeReverseADHessian{T,F} <: ADBackend
   seed::Vector{T}
   Hv::Vector{T}
+  f::F
 end
 
 function EnzymeReverseADHessian(
@@ -41,11 +94,12 @@ function EnzymeReverseADHessian(
 
   seed = zeros(T, nvar)
   Hv = zeros(T, nvar)
-  return EnzymeReverseADHessian(seed, Hv)
+  return EnzymeReverseADHessian(seed, Hv, f)
 end
 
-struct EnzymeReverseADHvprod{T} <: InPlaceADbackend
+struct EnzymeReverseADHvprod{T,F} <: InPlaceADbackend
   grad::Vector{T}
+  f::F
 end
 
 function EnzymeReverseADHvprod(
@@ -57,7 +111,7 @@ function EnzymeReverseADHvprod(
   kwargs...,
 ) where {T}
   grad = zeros(T, nvar)
-  return EnzymeReverseADHvprod(grad)
+  return EnzymeReverseADHvprod(grad,f)
 end
 
 struct EnzymeReverseADJprod{T} <: InPlaceADbackend
@@ -153,7 +207,7 @@ function SparseEnzymeADJacobian(
   )
 end
 
-struct SparseEnzymeADHessian{R, C, S, L} <: ADBackend
+struct SparseEnzymeADHessian{R, C, S, L, F} <: ADBackend
   nvar::Int
   rowval::Vector{Int}
   colptr::Vector{Int}
@@ -166,6 +220,7 @@ struct SparseEnzymeADHessian{R, C, S, L} <: ADBackend
   y::Vector{R}
   grad::Vector{R}
   cx::Vector{R}
+  f::F
   ℓ::L
 end
 
@@ -216,12 +271,11 @@ function SparseEnzymeADHessian(
   cx = similar(x0, ncon)
   grad = similar(x0)
   function ℓ(x, y, obj_weight, cx)
-    # res = obj_weight * f(x)
-    res = f(x)
-    # if ncon != 0
-    #   c!(cx, x)
-    #   res += sum(cx[i] * y[i] for i = 1:ncon)
-    # end
+    res = obj_weight * f(x)
+    if ncon != 0
+      c!(cx, x)
+      res += sum(cx[i] * y[i] for i = 1:ncon)
+    end
     return res
   end
 
@@ -238,6 +292,7 @@ function SparseEnzymeADHessian(
     y,
     grad,
     cx,
+    f,
     ℓ,
   )
 end
@@ -248,7 +303,7 @@ end
 
     function ADNLPModels.gradient(::EnzymeReverseADGradient, f, x)
       g = similar(x)
-      Enzyme.gradient!(Enzyme.Reverse, g, Enzyme.Const(f), x)
+      Enzyme.autodiff(set_runtime_activity(Enzyme.Reverse), Enzyme.Const(f), Enzyme.Active, Enzyme.Duplicated(x, g))
       return g
     end
 
@@ -269,14 +324,15 @@ end
         b.seed[i] = one(T)
         # Enzyme.hvp!(b.Hv, f, x, b.seed)
         grad = make_zero(x)
-        Enzyme.autodiff(
-          Enzyme.Forward,
-          Enzyme.Const(Enzyme.gradient!),
-          Enzyme.Const(Enzyme.Reverse),
-          Enzyme.DuplicatedNoNeed(grad, b.Hv),
-          Enzyme.Const(f),
-          Enzyme.Duplicated(x, b.seed),
-        )
+        _hvp!(DuplicatedNoNeed(grad, b.Hv), b.f, x, b.seed)
+        # Enzyme.autodiff(
+        #   Enzyme.Forward,
+        #   Enzyme.Const(Enzyme.gradient!),
+        #   Enzyme.Const(Enzyme.Reverse),
+        #   Enzyme.DuplicatedNoNeed(grad, b.Hv),
+        #   Enzyme.Const(f),
+        #   Enzyme.Duplicated(x, b.seed),
+        # )
         view(hess, :, i) .= b.Hv
         b.seed[i] = zero(T)
       end
@@ -339,7 +395,7 @@ end
         Enzyme.Const(Enzyme.gradient!),
         Enzyme.Const(Enzyme.Reverse),
         Enzyme.DuplicatedNoNeed(b.grad, Hv),
-        Enzyme.Const(f),
+        Enzyme.Const(b.f),
         Enzyme.Duplicated(x, v),
       )
       return Hv
@@ -469,36 +525,6 @@ end
         b.v .= 0
         for col in cols
           b.v[col] = 1
-        end
-
-        function _gradient!(dx, ℓ, x, y, obj_weight, cx)
-          Enzyme.make_zero!(dx)
-          dcx = Enzyme.make_zero(cx)
-          res = Enzyme.autodiff(
-            Enzyme.set_runtime_activity(Enzyme.Reverse),
-            ℓ,
-            Enzyme.Active,
-            Enzyme.Duplicated(x, dx),
-            Enzyme.Const(y),
-            Enzyme.Const(obj_weight),
-            Enzyme.Duplicated(cx, dcx),
-          )
-          return nothing
-        end
-
-        function _hvp!(res, ℓ, x, v, y, obj_weight, cx)
-          dcx = Enzyme.make_zero(cx)
-          Enzyme.autodiff(
-            Enzyme.set_runtime_activity(Enzyme.Forward),
-            _gradient!,
-            res,
-            Enzyme.Const(ℓ),
-            Enzyme.Duplicated(x, v),
-            Enzyme.Const(y),
-            Enzyme.Const(obj_weight),
-            Enzyme.Duplicated(cx, dcx),
-          )
-          return nothing
         end
 
         _hvp!(
